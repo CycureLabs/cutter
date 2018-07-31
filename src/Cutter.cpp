@@ -645,6 +645,14 @@ QString CutterCore::cmdFunctionAt(RVA addr)
     return cmdFunctionAt(QString::number(addr));
 }
 
+void CutterCore::cmdEsil(QString command)
+{
+    QString res = cmd(command);
+    if (res.contains("[ESIL] Stopped execution in an invalid instruction")) {
+        msgBox.showMessage("Stopped when attempted to run an invalid instruction. You can disable this in Preferences");
+    }
+}
+
 QString CutterCore::createFunctionAt(RVA addr, QString name)
 {
     name.remove(QRegExp("[^a-zA-Z0-9_]"));
@@ -816,9 +824,8 @@ void CutterCore::startDebug()
     if (!currentlyDebugging) {
         offsetPriorDebugging = getOffset();
     }
-    // FIXME: we do a 'ds' here since otherwise the continue until commands
-    // sometimes do not work in r2.
-    cmd("ood; ds");
+    // FIXME: we do a 'dr' here since otherwise the process continues
+    cmd("ood; dr");
     emit registersChanged();
     if (!currentlyDebugging) {
         setConfig("asm.flags", false);
@@ -866,6 +873,8 @@ void CutterCore::attachDebug(int pid)
         // prevent register flags from appearing during debug/emul
         setConfig("asm.flags", false);
         currentlyDebugging = true;
+        currentlyOpenFile = getConfig("file.path");
+        currentlyAttachedToPID = pid;
         emit flagsChanged();
         emit changeDebugView();
     }
@@ -877,9 +886,11 @@ void CutterCore::stopDebug()
         if (currentlyEmulating) {
             cmd("aeim-; aei-; wcr; .ar-");
             currentlyEmulating = false;
+        } else if (currentlyAttachedToPID != -1) {
+            cmd(QString("dp- %1; o %2; .ar-").arg(QString::number(currentlyAttachedToPID), currentlyOpenFile));
+            currentlyAttachedToPID = -1;
         } else {
-            // we do a ds since otherwise the process does not die.
-            cmd("dk 9; ds; oo; .ar-");
+            cmd("dk 9; oo; .ar-");
         }
         seek(offsetPriorDebugging);
         setConfig("asm.flags", true);
@@ -905,7 +916,7 @@ void CutterCore::continueUntilDebug(QString offset)
         if (!currentlyEmulating) {
             cmd("dcu " + offset);
         } else {
-            cmd("aecu " + offset);
+            cmdEsil("aecu " + offset);
         }
         emit registersChanged();
         emit refreshCodeViews();
@@ -915,7 +926,11 @@ void CutterCore::continueUntilDebug(QString offset)
 void CutterCore::continueUntilCall()
 {
     if (currentlyDebugging) {
-        cmd("dcc");
+        if (currentlyEmulating) {
+            cmdEsil("aecc");
+        } else {
+            cmd("dcc");
+        }
         QString programCounterValue = cmd("dr?`drn PC`").trimmed();
         seek(programCounterValue);
         emit registersChanged();
@@ -926,7 +941,7 @@ void CutterCore::continueUntilSyscall()
 {
     if (currentlyDebugging) {
         if (currentlyEmulating) {
-            cmd("aecs");
+            cmdEsil("aecs");
         } else {
             cmd("dcs");
         }
@@ -939,7 +954,7 @@ void CutterCore::continueUntilSyscall()
 void CutterCore::stepDebug()
 {
     if (currentlyDebugging) {
-        cmd("ds");
+        cmdEsil("ds");
         QString programCounterValue = cmd("dr?`drn PC`").trimmed();
         seek(programCounterValue);
         emit registersChanged();
@@ -949,7 +964,7 @@ void CutterCore::stepDebug()
 void CutterCore::stepOverDebug()
 {
     if (currentlyDebugging) {
-        cmd("dso");
+        cmdEsil("dso");
         QString programCounterValue = cmd("dr?`drn PC`").trimmed();
         seek(programCounterValue);
         emit registersChanged();
